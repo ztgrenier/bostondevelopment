@@ -1,0 +1,40 @@
+import json
+import urllib.request
+import boto3
+
+CSV_URL = "https://data.boston.gov/dataset/f9788baa-9486-4a69-8d0a-91d4b6e1ed9d/resource/32e3dc10-182d-4f51-bbd9-4c28b525f1ed/download/article_80_development_projects_website.csv"
+S3_BUCKET = "boston-development"
+S3_KEY = "Boston-Development.csv"
+
+s3 = boto3.client("s3")
+
+def lambda_handler(event, context):
+    try:
+        # Download the CSV
+        with urllib.request.urlopen(CSV_URL) as response:
+            csv_data = response.read()
+
+        # Upload to S3
+        s3.put_object(
+            Bucket=S3_BUCKET,
+            Key=S3_KEY,
+            Body=csv_data,
+            ContentType="text/csv"
+        )
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": "CSV successfully downloaded and uploaded to S3",
+                "bucket": S3_BUCKET,
+                "key": S3_KEY
+            })
+        }
+
+    except Exception as e:
+        return {
+            "statusCode": 500,
+            "body": json.dumps({
+                "error": str(e)
+            })
+        }
