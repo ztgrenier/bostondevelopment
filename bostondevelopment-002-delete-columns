@@ -1,0 +1,76 @@
+import json
+import csv
+import io
+import boto3
+
+S3_BUCKET = "boston-development"
+S3_KEY = "Boston-Development.csv"
+
+COLUMNS_TO_REMOVE = {
+    "_id",
+    "project_id",
+    "project_zip_code",
+    "display_on_web",
+    "pops",
+    "sam_ids",
+    "shape_wkt",
+    "POINT_X",
+    "POINT_Y"
+}
+
+s3 = boto3.client("s3")
+
+def lambda_handler(event, context):
+    try:
+        # Download CSV from S3
+        response = s3.get_object(Bucket=S3_BUCKET, Key=S3_KEY)
+        csv_content = response["Body"].read().decode("utf-8")
+
+        input_buffer = io.StringIO(csv_content)
+        reader = csv.DictReader(input_buffer)
+
+        # Determine remaining columns
+        original_fields = reader.fieldnames
+        remaining_fields = [
+            field for field in original_fields
+            if field not in COLUMNS_TO_REMOVE
+        ]
+
+        # Write cleaned CSV
+        output_buffer = io.StringIO()
+        writer = csv.DictWriter(output_buffer, fieldnames=remaining_fields)
+        writer.writeheader()
+
+        row_count = 0
+        for row in reader:
+            cleaned_row = {
+                k: v for k, v in row.items()
+                if k in remaining_fields
+            }
+            writer.writerow(cleaned_row)
+            row_count += 1
+
+        # Upload cleaned CSV back to S3
+        s3.put_object(
+            Bucket=S3_BUCKET,
+            Key=S3_KEY,
+            Body=output_buffer.getvalue().encode("utf-8"),
+            ContentType="text/csv"
+        )
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": "CSV cleaned successfully",
+                "rows_processed": row_count,
+                "columns_removed": list(COLUMNS_TO_REMOVE),
+                "bucket": S3_BUCKET,
+                "key": S3_KEY
+            })
+        }
+
+    except Exception as e:
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": str(e)})
+        }
