@@ -1,0 +1,90 @@
+import json
+import csv
+import io
+import boto3
+from datetime import datetime, timedelta
+
+S3_BUCKET = "boston-development"
+S3_KEY = "Boston-Development.csv"
+
+s3 = boto3.client("s3")
+
+def parse_date(date_str):
+    """
+    Parse date string to datetime object.
+    Return None if empty or invalid.
+    """
+    if not date_str or date_str.strip() == "":
+        return None
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        # Try alternative format if needed, e.g., "%m/%d/%Y"
+        try:
+            return datetime.strptime(date_str, "%m/%d/%Y")
+        except ValueError:
+            return None
+
+def lambda_handler(event, context):
+    try:
+        # Download CSV from S3
+        response = s3.get_object(Bucket=S3_BUCKET, Key=S3_KEY)
+        csv_content = response["Body"].read().decode("utf-8")
+
+        input_buffer = io.StringIO(csv_content)
+        reader = csv.DictReader(input_buffer)
+        fieldnames = reader.fieldnames
+
+        # Filter rows
+        today = datetime.today()
+        two_years_ago = today - timedelta(days=2*365)
+
+        filtered_rows = []
+        removed_count = 0
+
+        for row in reader:
+            date1 = parse_date(row.get("last_board_approved_date"))
+            date2 = parse_date(row.get("last_filed_date"))
+
+            # Skip row if both dates are blank
+            if date1 is None and date2 is None:
+                removed_count += 1
+                continue
+
+            # Skip row if either date is older than 2 years
+            if (date1 and date1 < two_years_ago) or (date2 and date2 < two_years_ago):
+                removed_count += 1
+                continue
+
+            filtered_rows.append(row)
+
+        # Write filtered CSV back to same S3 key (overwrite)
+        output_buffer = io.StringIO()
+        writer = csv.DictWriter(output_buffer, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(filtered_rows)
+
+        s3.put_object(
+            Bucket=S3_BUCKET,
+            Key=S3_KEY,
+            Body=output_buffer.getvalue().encode("utf-8"),
+            ContentType="text/csv"
+        )
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": "CSV filtered successfully and overwritten",
+                "rows_original": removed_count + len(filtered_rows),
+                "rows_removed": removed_count,
+                "rows_remaining": len(filtered_rows),
+                "bucket": S3_BUCKET,
+                "key": S3_KEY
+            })
+        }
+
+    except Exception as e:
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": str(e)})
+        }
